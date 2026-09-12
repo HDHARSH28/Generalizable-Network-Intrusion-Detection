@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Models (large binary files — retrain locally)
+models/*.pkl
+models/*.json
+
+# Data (too large for GitHub)
+data/*.csv
+
+# Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Results
+results/*.csv
+results/*.json
