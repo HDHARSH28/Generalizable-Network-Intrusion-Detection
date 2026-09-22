@@ -427,7 +427,7 @@ def page_dashboard(ctx):
                     color_discrete_sequence=["#00e676", "#00bcd4", "#7c4dff"],
                 )
                 fig = plotly_dark_layout(fig, "Per-Class Performance")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
     with c2:
         # Feature importance chart
@@ -441,7 +441,7 @@ def page_dashboard(ctx):
             )
             fig = plotly_dark_layout(fig, "Top 10 Important Features")
             fig.update_layout(yaxis=dict(autorange="reversed"), coloraxis_showscale=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     # Architecture diagram
     _render_architecture()
@@ -526,9 +526,9 @@ def page_analyze_csv(ctx):
         st.success(f"Loaded **{len(df):,}** records with **{len(df.columns)}** columns ({len(numeric_cols)} numeric).")
 
         with st.expander("Preview uploaded data", expanded=False):
-            st.dataframe(df.head(20), use_container_width=True)
+            st.dataframe(df.head(20), width="stretch")
 
-        if st.button("🚀 Run Hybrid Analysis", type="primary", use_container_width=True):
+        if st.button("🚀 Run Hybrid Analysis", type="primary", width="stretch"):
             _run_csv_analysis(df, ctx)
 
 
@@ -610,7 +610,7 @@ def _run_csv_analysis(df: pd.DataFrame, ctx: dict):
             hole=0.4,
         )])
         fig = plotly_dark_layout(fig, "Detection Distribution")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with c2:
         bar_df = pd.DataFrame({"Category": pie_labels, "Count": pie_values})
@@ -624,13 +624,13 @@ def _run_csv_analysis(df: pd.DataFrame, ctx: dict):
             },
         )
         fig = plotly_dark_layout(fig, "Category Counts")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # ── Results table ──
     st.markdown("### 📋 Detailed Results")
     st.dataframe(
         results_df,
-        use_container_width=True,
+        width="stretch",
         height=400,
         column_config={
             "Status": st.column_config.TextColumn("Status", width="small"),
@@ -645,7 +645,7 @@ def _run_csv_analysis(df: pd.DataFrame, ctx: dict):
         data=csv_data,
         file_name="hybrid_detection_results.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -686,7 +686,7 @@ def page_single_prediction(ctx):
 
     st.markdown("---")
 
-    if st.button("⚡ Analyze Traffic", type="primary", use_container_width=True):
+    if st.button("⚡ Analyze Traffic", type="primary", width="stretch"):
         _run_single_prediction(feature_values, ctx)
 
 
@@ -845,7 +845,7 @@ def page_model_performance(ctx):
                 yaxis_title="Actual",
                 yaxis=dict(autorange="reversed"),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with c2:
         st.markdown("### 📋 Classification Report")
@@ -862,7 +862,11 @@ def page_model_performance(ctx):
                         "Support": int(val.get("support", 0)),
                     })
             if report_rows:
-                st.dataframe(pd.DataFrame(report_rows), use_container_width=True, hide_index=True)
+                st.dataframe(
+                pd.DataFrame(report_rows),
+                width="stretch",
+                hide_index=True
+                )
 
     st.markdown("---")
 
@@ -879,7 +883,7 @@ def page_model_performance(ctx):
         )
         fig = plotly_dark_layout(fig, "Random Forest Feature Importance (Top 10)")
         fig.update_layout(yaxis=dict(autorange="reversed"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Table
         for i, fi in enumerate(feat_imp[:10], 1):
@@ -920,13 +924,13 @@ def page_train_models():
 
     if method == "🧪 Demo Data (Synthetic)":
         n_samples = st.slider("Number of demo samples", 500, 5000, 2000, step=500)
-        if st.button("🚀 Generate & Train", type="primary", use_container_width=True):
+        if st.button("🚀 Generate & Train", type="primary", width="stretch"):
             train_df = generate_demo_dataset(n_samples=n_samples)
             is_demo = True
             st.info("⚠️ Using synthetic demo data. Results must NOT be used as research results.")
     else:
         uploaded = st.file_uploader("Upload CIC-IDS2017 CSV", type=["csv"], key="train_upload")
-        if uploaded and st.button("🚀 Train on Uploaded Data", type="primary", use_container_width=True):
+        if uploaded and st.button("🚀 Train on Uploaded Data", type="primary", width="stretch"):
             try:
                 train_df = pd.read_csv(uploaded, low_memory=False)
                 train_df.columns = train_df.columns.str.strip()
