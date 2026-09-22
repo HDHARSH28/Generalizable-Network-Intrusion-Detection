@@ -1,0 +1,86 @@
+{
+  "accuracy": 0.9966578984405509,
+  "precision": 0.9966550498904041,
+  "recall": 0.9966578984405509,
+  "f1_score": 0.9966508304325749,
+  "false_positive_rate": 0.0009396680634490588,
+  "confusion_matrix": [
+    [
+      418903,
+      394
+    ],
+    [
+      1292,
+      83884
+    ]
+  ],
+  "classification_report": {
+    "BENIGN": {
+      "precision": 0.9969252370923024,
+      "recall": 0.999060331936551,
+      "f1-score": 0.9979916425647892,
+      "support": 419297.0
+    },
+    "ATTACK": {
+      "precision": 0.9953249958470776,
+      "recall": 0.984831407908331,
+      "f1-score": 0.9900503971579308,
+      "support": 85176.0
+    },
+    "accuracy": 0.9966578984405509,
+    "macro avg": {
+      "precision": 0.99612511646969,
+      "recall": 0.991945869922441,
+      "f1-score": 0.9940210198613599,
+      "support": 504473.0
+    },
+    "weighted avg": {
+      "precision": 0.9966550498904041,
+      "recall": 0.9966578984405509,
+      "f1-score": 0.9966508304325749,
+      "support": 504473.0
+    }
+  },
+  "feature_importance": [
+    {
+      "feature": "Bwd Packet Length Std",
+      "importance": 0.13038388018072317
+    },
+    {
+      "feature": "Avg Bwd Segment Size",
+      "importance": 0.1248838178163905
+    },
+    {
+      "feature": "Bwd Packet Length Mean",
+      "importance": 0.10459903074861263
+    },
+    {
+      "feature": "Packet Length Std",
+      "importance": 0.09696073575095392
+    },
+    {
+      "feature": "Packet Length Variance",
+      "importance": 0.09688583362205594
+    },
+    {
+      "feature": "Average Packet Size",
+      "importance": 0.063326123301257
+    },
+    {
+      "feature": "Max Packet Length",
+      "importance": 0.0627122761170365
+    },
+    {
+      "feature": "Packet Length Mean",
+      "importance": 0.058378245902023645
+    },
+    {
+      "feature": "Bwd Packet Length Max",
+      "importance": 0.05393753322888344
+    },
+    {
+      "feature": "Fwd IAT Std",
+      "importance": 0.045042820402465905
+    }
+  ]
+}
