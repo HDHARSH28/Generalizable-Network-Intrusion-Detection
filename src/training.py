@@ -6,6 +6,7 @@ Trains Random Forest (supervised) and Isolation Forest (anomaly detection).
 import os
 import json
 import numpy as np
+import sklearn
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.metrics import (
     accuracy_score,
@@ -73,18 +74,33 @@ def evaluate_model(
     """Evaluate the supervised model and return all metrics."""
     y_pred = model.predict(X_test)
 
+    # Build target names aligned with actual classes
+    classes = sorted(np.unique(np.concatenate([y_test, y_pred])))
     target_names = None
     if label_names:
-        # Build ordered list aligned with the classes present in y_test
-        classes = sorted(np.unique(np.concatenate([y_test, y_pred])))
-        target_names = [label_names.get(str(int(c)), str(c)) for c in classes]
+        # Handle both int and string keys in label_names
+        target_names = []
+        for c in classes:
+            name = label_names.get(int(c),
+                   label_names.get(str(int(c)), str(c)))
+            target_names.append(name)
+
+    cm = confusion_matrix(y_test, y_pred).tolist()
+
+    # Calculate FPR for binary classification
+    fpr = None
+    if len(classes) == 2:
+        tn = cm[0][0]
+        fp = cm[0][1]
+        fpr = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
 
     metrics = {
         "accuracy": float(accuracy_score(y_test, y_pred)),
         "precision": float(precision_score(y_test, y_pred, average="weighted", zero_division=0)),
         "recall": float(recall_score(y_test, y_pred, average="weighted", zero_division=0)),
         "f1_score": float(f1_score(y_test, y_pred, average="weighted", zero_division=0)),
-        "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
+        "false_positive_rate": fpr,
+        "confusion_matrix": cm,
         "classification_report": classification_report(
             y_test, y_pred, target_names=target_names, zero_division=0, output_dict=True,
         ),
@@ -125,7 +141,27 @@ def save_models(
 
 
 def load_models(models_dir: str = MODELS_DIR) -> dict:
-    """Load saved models and metrics."""
+    """
+    Load saved models and metrics with version compatibility check.
+    Raises a clear error if models are incompatible.
+    """
+    from src.preprocessing import load_model_metadata
+
+    # Check version compatibility via metadata
+    metadata = load_model_metadata(models_dir)
+    if metadata:
+        saved_sklearn = metadata.get("sklearn_version", "unknown")
+        current_sklearn = sklearn.__version__
+        # Compare major.minor version (patch differences are usually safe)
+        saved_parts = saved_sklearn.split(".")[:2]
+        current_parts = current_sklearn.split(".")[:2]
+        if saved_parts != current_parts and saved_sklearn != "unknown":
+            raise RuntimeError(
+                f"Model version mismatch: models were trained with "
+                f"scikit-learn {saved_sklearn}, but the current version is "
+                f"{current_sklearn}. Retrain using: python train.py"
+            )
+
     rf = joblib.load(os.path.join(models_dir, "random_forest.pkl"))
     iso = joblib.load(os.path.join(models_dir, "isolation_forest.pkl"))
     metrics = {}

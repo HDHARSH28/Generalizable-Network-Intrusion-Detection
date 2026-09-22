@@ -29,6 +29,9 @@ from src.preprocessing import (
     preprocess_dataset,
     clean_data,
     get_dataset_stats,
+    save_preprocessing_artefacts,
+    save_model_metadata,
+    load_model_metadata,
 )
 from src.training import (
     load_models,
@@ -52,7 +55,6 @@ from src.hybrid_detector import (
     KNOWN_ATTACK,
     ANOMALOUS,
 )
-from src.preprocessing import save_preprocessing_artefacts
 
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
@@ -166,13 +168,23 @@ def inject_css():
         border: 1px solid rgba(255, 145, 0, 0.3);
     }
 
-    /* ── Demo warning banner ── */
+    /* ── Mode banners ── */
     .demo-banner {
         background: rgba(255, 145, 0, 0.12);
         border: 1px solid rgba(255, 145, 0, 0.35);
         border-radius: 10px;
         padding: 14px 20px;
         color: #ff9100;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        text-align: center;
+    }
+    .real-banner {
+        background: rgba(0, 230, 118, 0.08);
+        border: 1px solid rgba(0, 230, 118, 0.25);
+        border-radius: 10px;
+        padding: 14px 20px;
+        color: #00e676;
         font-weight: 600;
         margin-bottom: 1.5rem;
         text-align: center;
@@ -218,22 +230,51 @@ def cached_load_models():
     try:
         m = load_models(MODELS_DIR)
         p = load_preprocessing_artefacts(MODELS_DIR)
-        return {**m, **p}
+        metadata = load_model_metadata(MODELS_DIR)
+        return {**m, **p, "metadata": metadata}
+    except RuntimeError as e:
+        # Version mismatch — show clear message
+        st.error(f"⚠️ {e}")
+        return None
     except Exception as e:
         st.error(f"Error loading models: {e}")
         return None
 
 
-def is_demo_mode():
-    """Check if the current models were trained on demo data."""
-    meta_path = os.path.join(MODELS_DIR, "selected_features.json")
-    if os.path.exists(meta_path):
-        with open(meta_path) as f:
-            meta = json.load(f)
-        # Demo data uses our synthetic feature names
-        if "Flow Duration" in meta.get("selected_features", []):
-            return True
-    return False
+def get_mode(ctx: dict | None) -> str:
+    """
+    Determine mode from model_metadata.json.
+    Returns 'real', 'demo', or 'unknown'.
+    """
+    if ctx is None:
+        return "unknown"
+    metadata = ctx.get("metadata")
+    if metadata and "mode" in metadata:
+        return metadata["mode"]
+    # Fallback: no metadata file exists (legacy models)
+    return "unknown"
+
+
+def render_mode_banner(mode: str):
+    """Display the appropriate mode banner."""
+    if mode == "demo":
+        st.markdown(
+            '<div class="demo-banner">⚠ DEMO MODE — Predictions are generated using '
+            'demonstration data and must not be used as research results.</div>',
+            unsafe_allow_html=True,
+        )
+    elif mode == "real":
+        metadata = load_model_metadata(MODELS_DIR)
+        trained_at = ""
+        if metadata and "trained_at" in metadata:
+            trained_at = metadata["trained_at"][:10]  # date only
+        st.markdown(
+            f'<div class="real-banner">✓ REAL CIC-IDS2017 MODEL'
+            f'{" — Trained " + trained_at if trained_at else ""}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning("⚠ Model metadata not found. Run `python train.py` to regenerate.")
 
 
 def plotly_dark_layout(fig, title=""):
@@ -267,11 +308,29 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # Model status indicator
+        # Model status indicator with metadata
         if models_exist(MODELS_DIR):
-            st.success("Models loaded ✓")
-            if is_demo_mode():
-                st.warning("Demo models active")
+            metadata = load_model_metadata(MODELS_DIR)
+            if metadata:
+                mode = metadata.get("mode", "unknown")
+                dataset = metadata.get("dataset", "unknown")
+                trained_at = metadata.get("trained_at", "")[:10]
+                n_features = metadata.get("selected_feature_count", "?")
+
+                if mode == "real":
+                    st.success("✓ CIC-IDS2017 Model")
+                elif mode == "demo":
+                    st.warning("⚠ Demo Model")
+                else:
+                    st.info("Models loaded")
+
+                st.caption(f"Dataset: {dataset}")
+                st.caption(f"Features: {n_features}")
+                if trained_at:
+                    st.caption(f"Trained: {trained_at}")
+            else:
+                st.success("Models loaded ✓")
+                st.caption("No metadata — run `python train.py`")
         else:
             st.error("Models not trained")
             st.caption("Run `python train.py` first")
@@ -288,7 +347,7 @@ def render_sidebar():
 
 def page_dashboard(ctx):
     st.markdown('<div class="main-header">📊 Security Dashboard</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Real-time hybrid intrusion detection overview</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Hybrid intrusion detection overview</div>', unsafe_allow_html=True)
 
     if ctx is None:
         st.error("⚠️ **Models not trained yet.** Run `python train.py` first.")
@@ -296,17 +355,19 @@ def page_dashboard(ctx):
         _render_architecture()
         return
 
-    if is_demo_mode():
-        st.markdown(
-            '<div class="demo-banner">⚠ DEMO MODE — Predictions are generated using '
-            'demonstration data and must not be used as research results.</div>',
-            unsafe_allow_html=True,
-        )
+    mode = get_mode(ctx)
+    render_mode_banner(mode)
 
     metrics = ctx.get("metrics", {})
 
     # ── Row 1: Key metrics ──
-    c1, c2, c3, c4 = st.columns(4)
+    fpr = metrics.get("false_positive_rate")
+    if fpr is not None:
+        c1, c2, c3, c4, c5 = st.columns(5)
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        c5 = None
+
     with c1:
         st.metric("Accuracy", f"{metrics.get('accuracy', 0):.2%}")
     with c2:
@@ -315,6 +376,9 @@ def page_dashboard(ctx):
         st.metric("Recall", f"{metrics.get('recall', 0):.2%}")
     with c4:
         st.metric("F1 Score", f"{metrics.get('f1_score', 0):.2%}")
+    if c5 is not None:
+        with c5:
+            st.metric("False Positive Rate", f"{fpr:.4%}")
 
     st.markdown("---")
 
@@ -324,16 +388,16 @@ def page_dashboard(ctx):
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("#### 🌲 Random Forest")
         st.markdown("**Status:** Trained ✓")
-        st.markdown(f"**Type:** Supervised Classifier")
-        st.markdown(f"**Role:** Detect known attack patterns")
+        st.markdown("**Type:** Supervised Classifier")
+        st.markdown("**Role:** Detect known attack patterns")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with c2:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("#### 🌀 Isolation Forest")
         st.markdown("**Status:** Trained ✓")
-        st.markdown(f"**Type:** Anomaly Detector")
-        st.markdown(f"**Role:** Detect unseen / zero-day anomalies")
+        st.markdown("**Type:** Anomaly Detector")
+        st.markdown("**Role:** Detect previously unseen / anomalous traffic")
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
@@ -429,21 +493,37 @@ def page_analyze_csv(ctx):
         st.error("⚠️ **Models not trained yet.** Run `python train.py` first.")
         return
 
-    if is_demo_mode():
-        st.markdown(
-            '<div class="demo-banner">⚠ DEMO MODE — Predictions are generated using '
-            'demonstration data and must not be used as research results.</div>',
-            unsafe_allow_html=True,
-        )
+    mode = get_mode(ctx)
+    render_mode_banner(mode)
+
+    st.info("📌 Upload a CSV file with network traffic features. Max recommended size: 100 MB.")
 
     uploaded = st.file_uploader("Upload a CSV file with network traffic data", type=["csv"])
 
     if uploaded is not None:
-        with st.spinner("Reading CSV ..."):
-            df = pd.read_csv(uploaded, low_memory=False)
-            df.columns = df.columns.str.strip()
+        # File size check
+        file_size_mb = uploaded.size / (1024 * 1024)
+        if file_size_mb > 200:
+            st.warning(f"⚠ Large file ({file_size_mb:.0f} MB). Processing may take a while.")
 
-        st.success(f"Loaded **{len(df):,}** records with **{len(df.columns)}** columns.")
+        try:
+            with st.spinner("Reading CSV ..."):
+                df = pd.read_csv(uploaded, low_memory=False)
+                df.columns = df.columns.str.strip()
+        except Exception as e:
+            st.error(f"Unable to read this file as a valid CSV: {e}")
+            return
+
+        if df.empty:
+            st.error("The uploaded CSV file is empty.")
+            return
+
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) == 0:
+            st.error("The uploaded CSV contains no numeric columns. Cannot perform predictions.")
+            return
+
+        st.success(f"Loaded **{len(df):,}** records with **{len(df.columns)}** columns ({len(numeric_cols)} numeric).")
 
         with st.expander("Preview uploaded data", expanded=False):
             st.dataframe(df.head(20), use_container_width=True)
@@ -466,12 +546,17 @@ def _run_csv_analysis(df: pd.DataFrame, ctx: dict):
             selected_features=ctx["selected_features"],
             all_feature_names=ctx.get("all_feature_names"),
         )
+    except ValueError as e:
+        st.error(f"⚠️ {e}")
+        progress.empty()
+        return
     except Exception as e:
         st.error(f"Preprocessing failed: {e}")
+        progress.empty()
         return
 
     # Step 2: Predict
-    progress.progress(50, text="Running Random Forest predictions ...")
+    progress.progress(50, text="Running Random Forest + Isolation Forest predictions ...")
     results = batch_predict(ctx["random_forest"], ctx["isolation_forest"], X)
 
     # Step 3: Hybrid decision
@@ -488,6 +573,8 @@ def _run_csv_analysis(df: pd.DataFrame, ctx: dict):
         results["anomaly_predictions"],
         hybrid_preds,
         label_names=ctx.get("label_names"),
+        supervised_confidences=results.get("supervised_confidences"),
+        anomaly_scores=results.get("anomaly_scores"),
     )
     summary = get_summary_counts(hybrid_preds)
 
@@ -512,17 +599,21 @@ def _run_csv_analysis(df: pd.DataFrame, ctx: dict):
     # ── Distribution chart ──
     c1, c2 = st.columns(2)
     with c1:
+        # Use explicit label→color mapping for correct alignment
+        pie_labels = ["NORMAL", "KNOWN ATTACK", "ANOMALOUS"]
+        pie_values = [summary.get(k, 0) for k in pie_labels]
+        pie_colors = [RESULT_COLORS[NORMAL], RESULT_COLORS[KNOWN_ATTACK], RESULT_COLORS[ANOMALOUS]]
         fig = go.Figure(data=[go.Pie(
-            labels=list(summary.keys()),
-            values=list(summary.values()),
-            marker=dict(colors=[RESULT_COLORS[NORMAL], RESULT_COLORS[KNOWN_ATTACK], RESULT_COLORS[ANOMALOUS]]),
+            labels=pie_labels,
+            values=pie_values,
+            marker=dict(colors=pie_colors),
             hole=0.4,
         )])
         fig = plotly_dark_layout(fig, "Detection Distribution")
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        bar_df = pd.DataFrame(list(summary.items()), columns=["Category", "Count"])
+        bar_df = pd.DataFrame({"Category": pie_labels, "Count": pie_values})
         fig = px.bar(
             bar_df, x="Category", y="Count",
             color="Category",
@@ -568,31 +659,26 @@ def page_single_prediction(ctx):
         st.error("⚠️ **Models not trained yet.** Run `python train.py` first.")
         return
 
-    if is_demo_mode():
-        st.markdown(
-            '<div class="demo-banner">⚠ DEMO MODE — Predictions are generated using '
-            'demonstration data and must not be used as research results.</div>',
-            unsafe_allow_html=True,
-        )
+    mode = get_mode(ctx)
+    render_mode_banner(mode)
 
     selected_features = ctx.get("selected_features", [])
     all_features = ctx.get("all_feature_names", [])
 
-    if not all_features:
+    if not selected_features:
         st.warning("Feature metadata not available.")
         return
 
     st.markdown("### Enter Network Traffic Features")
-    st.caption(f"Using **{len(selected_features)}** selected features (out of {len(all_features)} total).")
+    st.caption(f"Enter values for the **{len(selected_features)}** selected features used by the model.")
 
-    # Build input form
+    # Build input form — ONLY show selected features (not all 78)
     feature_values = {}
     cols = st.columns(3)
-    for i, feat in enumerate(all_features):
+    for i, feat in enumerate(selected_features):
         with cols[i % 3]:
-            highlight = "⭐ " if feat in selected_features else ""
             feature_values[feat] = st.number_input(
-                f"{highlight}{feat}",
+                f"{feat}",
                 value=0.0,
                 format="%.4f",
                 key=f"feat_{i}",
@@ -606,8 +692,14 @@ def page_single_prediction(ctx):
 
 def _run_single_prediction(feature_values: dict, ctx: dict):
     """Run prediction on a single sample."""
-    # Build DataFrame from input
-    df = pd.DataFrame([feature_values])
+    all_features = ctx.get("all_feature_names", [])
+
+    # Build a full feature row with all training features
+    # Selected feature values from the form, rest filled with 0
+    full_values = {f: 0.0 for f in all_features}
+    full_values.update(feature_values)
+
+    df = pd.DataFrame([full_values])
 
     # Preprocess
     try:
@@ -643,7 +735,7 @@ def _run_single_prediction(feature_values: dict, ctx: dict):
                 unsafe_allow_html=True)
 
     # Detail cards
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("**🌲 Supervised Prediction**")
@@ -654,12 +746,19 @@ def _run_single_prediction(feature_values: dict, ctx: dict):
 
     with c2:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("**🌀 Anomaly Detection**")
-        ano_label = "Normal" if result["anomaly_prediction"] == 1 else "Anomalous"
-        st.markdown(f"### {ano_label}")
+        st.markdown("**📊 Confidence**")
+        st.markdown(f"### {result['supervised_confidence']:.2%}")
         st.markdown('</div>', unsafe_allow_html=True)
 
     with c3:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("**🌀 Anomaly Detection**")
+        ano_label = "Normal" if result["anomaly_prediction"] == 1 else "Anomalous"
+        st.markdown(f"### {ano_label}")
+        st.caption(f"Score: {result['anomaly_score']:.4f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with c4:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("**⏱️ Processing Time**")
         st.markdown(f"### {result['processing_time_ms']:.2f} ms")
@@ -673,7 +772,7 @@ def _run_single_prediction(feature_values: dict, ctx: dict):
                 "matching patterns learned during training.")
     elif hybrid == ANOMALOUS:
         st.warning("The **Random Forest** classified this as benign, but the **Isolation Forest** "
-                   "detected anomalous behaviour. This could indicate a **previously unseen / zero-day attack**.")
+                   "detected anomalous behaviour. This could indicate a **previously unseen attack**.")
     else:
         st.success("Both the **Random Forest** (supervised) and **Isolation Forest** (anomaly detection) "
                    "agree this traffic is **normal**.")
@@ -689,18 +788,24 @@ def page_model_performance(ctx):
         st.error("⚠️ **Models not trained yet.** Run `python train.py` first.")
         return
 
-    if is_demo_mode():
-        st.markdown(
-            '<div class="demo-banner">⚠ DEMO MODE — Predictions are generated using '
-            'demonstration data and must not be used as research results.</div>',
-            unsafe_allow_html=True,
-        )
+    mode = get_mode(ctx)
+    render_mode_banner(mode)
 
     metrics = ctx.get("metrics", {})
 
+    if not metrics:
+        st.warning("No evaluation results available. Train the model first.")
+        return
+
     # ── Overall metrics ──
     st.markdown("### 📊 Overall Metrics")
-    c1, c2, c3, c4 = st.columns(4)
+    fpr = metrics.get("false_positive_rate")
+    if fpr is not None:
+        c1, c2, c3, c4, c5 = st.columns(5)
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        c5 = None
+
     with c1:
         st.metric("Accuracy", f"{metrics.get('accuracy', 0):.4f}")
     with c2:
@@ -709,6 +814,9 @@ def page_model_performance(ctx):
         st.metric("Recall", f"{metrics.get('recall', 0):.4f}")
     with c4:
         st.metric("F1 Score", f"{metrics.get('f1_score', 0):.4f}")
+    if c5 is not None:
+        with c5:
+            st.metric("False Positive Rate", f"{fpr:.6f}")
 
     st.markdown("---")
 
@@ -808,23 +916,30 @@ def page_train_models():
     n_features = st.slider("Number of features to select (SelectKBest)", 5, 30, 20)
 
     train_df = None
+    is_demo = False
 
     if method == "🧪 Demo Data (Synthetic)":
         n_samples = st.slider("Number of demo samples", 500, 5000, 2000, step=500)
         if st.button("🚀 Generate & Train", type="primary", use_container_width=True):
             train_df = generate_demo_dataset(n_samples=n_samples)
+            is_demo = True
             st.info("⚠️ Using synthetic demo data. Results must NOT be used as research results.")
     else:
         uploaded = st.file_uploader("Upload CIC-IDS2017 CSV", type=["csv"], key="train_upload")
         if uploaded and st.button("🚀 Train on Uploaded Data", type="primary", use_container_width=True):
-            train_df = pd.read_csv(uploaded, low_memory=False)
-            train_df.columns = train_df.columns.str.strip()
+            try:
+                train_df = pd.read_csv(uploaded, low_memory=False)
+                train_df.columns = train_df.columns.str.strip()
+                is_demo = False
+            except Exception as e:
+                st.error(f"Unable to read CSV: {e}")
+                return
 
     if train_df is not None:
-        _run_training(train_df, n_features)
+        _run_training(train_df, n_features, is_demo)
 
 
-def _run_training(df: pd.DataFrame, n_features: int):
+def _run_training(df: pd.DataFrame, n_features: int, is_demo: bool):
     """Run the training pipeline from the UI."""
     progress = st.progress(0, text="Starting training ...")
 
@@ -861,6 +976,18 @@ def _run_training(df: pd.DataFrame, n_features: int):
         save_models(rf, iso, metrics, MODELS_DIR)
         save_preprocessing_artefacts(result, MODELS_DIR)
 
+        # Save metadata
+        mode = "demo" if is_demo else "real"
+        dataset = "synthetic" if is_demo else "CIC-IDS2017"
+        save_model_metadata(
+            mode=mode,
+            dataset=dataset,
+            n_original_features=len(result["all_feature_names"]),
+            n_selected_features=len(result["selected_features"]),
+            label_mapping=result["label_names"],
+            models_dir=MODELS_DIR,
+        )
+
         progress.progress(100, text="Done!")
         time.sleep(0.3)
         progress.empty()
@@ -868,6 +995,8 @@ def _run_training(df: pd.DataFrame, n_features: int):
         st.success("✓ Models trained and saved successfully!")
         st.markdown(f"- **Accuracy:** {metrics['accuracy']:.4f}")
         st.markdown(f"- **F1 Score:** {metrics['f1_score']:.4f}")
+        if metrics.get("false_positive_rate") is not None:
+            st.markdown(f"- **FPR:** {metrics['false_positive_rate']:.6f}")
         st.info("Refresh the page or switch tabs to use the new models.")
 
         # Clear the cached models so they reload

@@ -90,9 +90,11 @@ def build_results_dataframe(
     anomaly_preds: np.ndarray,
     hybrid_preds: np.ndarray,
     label_names: dict | None = None,
+    supervised_confidences: np.ndarray | None = None,
+    anomaly_scores: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """
-    Build a human-readable results DataFrame.
+    Build a human-readable results DataFrame with confidence and anomaly scores.
     """
     n = len(supervised_preds)
 
@@ -108,22 +110,41 @@ def build_results_dataframe(
     final_labels = [RESULT_LABELS.get(h, "UNKNOWN") for h in hybrid_preds]
     final_emojis = [RESULT_EMOJI.get(h, "❓") for h in hybrid_preds]
 
-    df = pd.DataFrame({
+    data = {
         "Record": range(1, n + 1),
         "Supervised Result": sup_labels,
-        "Anomaly Result": ano_labels,
-        "Final Decision": final_labels,
-        "Status": final_emojis,
-    })
+    }
+
+    # Add confidence if available
+    if supervised_confidences is not None:
+        data["Confidence"] = [f"{c:.2%}" for c in supervised_confidences]
+
+    data["Anomaly Result"] = ano_labels
+
+    # Add anomaly score if available
+    if anomaly_scores is not None:
+        data["Anomaly Score"] = [f"{s:.4f}" for s in anomaly_scores]
+
+    data["Final Decision"] = final_labels
+    data["Status"] = final_emojis
+
+    df = pd.DataFrame(data)
     return df
 
 
 def get_summary_counts(hybrid_preds: np.ndarray) -> dict:
-    """Return counts for each hybrid category."""
+    """
+    Return counts for each hybrid category.
+    Returns an OrderedDict-like dict with consistent key order:
+    NORMAL, KNOWN ATTACK, ANOMALOUS.
+    """
     unique, counts = np.unique(hybrid_preds, return_counts=True)
-    summary = {RESULT_LABELS.get(u, "UNKNOWN"): int(c) for u, c in zip(unique, counts)}
-    # Ensure all keys present
-    for code, label in RESULT_LABELS.items():
-        if label not in summary:
-            summary[label] = 0
+    count_map = {int(u): int(c) for u, c in zip(unique, counts)}
+
+    # Always return in this fixed order
+    summary = {
+        "NORMAL": count_map.get(NORMAL, 0),
+        "KNOWN ATTACK": count_map.get(KNOWN_ATTACK, 0),
+        "ANOMALOUS": count_map.get(ANOMALOUS, 0),
+    }
     return summary

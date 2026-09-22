@@ -4,14 +4,17 @@ Handles data loading, cleaning, feature selection, and scaling.
 """
 
 import os
+import sys
 import json
 import warnings
+import datetime
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import SelectKBest, f_classif
 import joblib
+import sklearn
 
 warnings.filterwarnings("ignore")
 
@@ -97,7 +100,7 @@ def _binarize_labels(series: pd.Series) -> pd.Series:
 
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Clean the dataset:
+    Clean the dataset for TRAINING:
     - Remove empty columns
     - Handle missing / infinite values
     - Remove duplicates
@@ -106,8 +109,23 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # Drop columns that are entirely NaN
     df = df.dropna(axis=1, how="all")
 
-    # Drop duplicate rows
+    # Drop duplicate rows (appropriate for training only)
     df = df.drop_duplicates()
+
+    # Replace infinities with NaN, then fill NaN with 0
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(0)
+
+    return df
+
+
+def clean_data_for_inference(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean data for INFERENCE — does NOT drop duplicates.
+    Every uploaded record is preserved and gets a prediction.
+    """
+    # Drop columns that are entirely NaN
+    df = df.dropna(axis=1, how="all")
 
     # Replace infinities with NaN, then fill NaN with 0
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -138,8 +156,8 @@ def preprocess_dataset(
     2. Select numeric features
     3. Binarize labels (optional)
     4. Train/test split
-    5. Scale features
-    6. Feature selection (SelectKBest)
+    5. Scale features (fit on train ONLY)
+    6. Feature selection (fit on train ONLY)
 
     Returns a dict with all artefacts needed for training.
     """
@@ -169,17 +187,17 @@ def preprocess_dataset(
     # Clip extreme values to prevent overflow during scaling
     X = X.clip(-1e10, 1e10)
 
-    # Train / test split  (stratified)
+    # Train / test split  (stratified) — BEFORE any fitting
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=RANDOM_STATE, stratify=y,
     )
 
-    # Scaling
+    # Scaling — fit ONLY on training data
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # Feature selection — SelectKBest
+    # Feature selection — fit ONLY on training data
     n_features = min(n_features, X_train_scaled.shape[1])
     selector = SelectKBest(score_func=f_classif, k=n_features)
     X_train_selected = selector.fit_transform(X_train_scaled, y_train)
@@ -203,6 +221,31 @@ def preprocess_dataset(
     }
 
 
+# ─────────────────── Feature Validation ──────────────────────────────────
+
+def validate_features_for_prediction(
+    df_columns: list[str],
+    required_features: list[str],
+    min_coverage: float = 0.5,
+) -> dict:
+    """
+    Validate that uploaded data has sufficient feature overlap with training data.
+    Returns a dict with validation results.
+    """
+    present = [f for f in required_features if f in df_columns]
+    missing = [f for f in required_features if f not in df_columns]
+    coverage = len(present) / len(required_features) if required_features else 0
+
+    return {
+        "valid": coverage >= min_coverage,
+        "coverage": coverage,
+        "present_count": len(present),
+        "total_required": len(required_features),
+        "missing_features": missing,
+        "present_features": present,
+    }
+
+
 # ─────────────────── Inference-time Preprocessing ────────────────────────
 
 def preprocess_for_prediction(
@@ -214,20 +257,28 @@ def preprocess_for_prediction(
 ) -> np.ndarray:
     """
     Preprocess new data for prediction using saved artefacts.
+    Does NOT drop duplicates — every record gets a prediction.
     """
-    df = clean_data(df)
+    df = clean_data_for_inference(df)
 
     # Keep only numeric
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     df = df[numeric_cols]
 
-    # Ensure same columns as training
+    # Validate feature coverage if we know the required features
     if all_feature_names is not None:
-        for col in all_feature_names:
-            if col not in df.columns:
-                df[col] = 0
-        df = df[[c for c in all_feature_names if c in df.columns]]
-        # Pad any still-missing columns
+        validation = validate_features_for_prediction(
+            df.columns.tolist(), all_feature_names,
+        )
+        if not validation["valid"]:
+            raise ValueError(
+                f"Uploaded CSV is incompatible with the trained model. "
+                f"Only {validation['present_count']}/{validation['total_required']} "
+                f"required features found. "
+                f"Missing features: {validation['missing_features'][:10]}..."
+            )
+
+        # Align columns to training order, fill missing with 0
         for col in all_feature_names:
             if col not in df.columns:
                 df[col] = 0
@@ -288,6 +339,47 @@ def generate_demo_dataset(n_samples: int = 2000, random_state: int = RANDOM_STAT
     df = pd.DataFrame(data, columns=feature_names)
     df["Label"] = labels
     return df
+
+
+# ─────────────────── Model Metadata ──────────────────────────────────────
+
+def save_model_metadata(
+    mode: str,
+    dataset: str,
+    n_original_features: int,
+    n_selected_features: int,
+    label_mapping: dict,
+    models_dir: str = MODELS_DIR,
+):
+    """Save model metadata for reproducibility and mode detection."""
+    metadata = {
+        "mode": mode,  # "real" or "demo"
+        "dataset": dataset,  # "CIC-IDS2017" or "synthetic"
+        "model_version": "1.0",
+        "trained_at": datetime.datetime.now().isoformat(),
+        "python_version": sys.version.split()[0],
+        "sklearn_version": sklearn.__version__,
+        "numpy_version": np.__version__,
+        "pandas_version": pd.__version__,
+        "joblib_version": joblib.__version__,
+        "original_feature_count": n_original_features,
+        "selected_feature_count": n_selected_features,
+        "label_mapping": {str(k): v for k, v in label_mapping.items()},
+        "random_state": RANDOM_STATE,
+    }
+    os.makedirs(models_dir, exist_ok=True)
+    with open(os.path.join(models_dir, "model_metadata.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+    return metadata
+
+
+def load_model_metadata(models_dir: str = MODELS_DIR) -> dict | None:
+    """Load model metadata. Returns None if not found."""
+    path = os.path.join(models_dir, "model_metadata.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, "r") as f:
+        return json.load(f)
 
 
 # ─────────────────── Save / Load Helpers ─────────────────────────────────
